@@ -1,0 +1,74 @@
+name: Deploy Sumikko Spire to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Check game rules
+        run: npm test
+      - name: Determine Pages path
+        id: path
+        env:
+          REPOSITORY: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          CUSTOM_BASE: ${{ vars.PAGES_BASE_PATH }}
+        run: |
+          repo="${REPOSITORY#*/}"
+          if [[ -n "$CUSTOM_BASE" ]]; then
+            base="$CUSTOM_BASE"
+          elif [[ "${repo,,}" == "${OWNER,,}.github.io" ]]; then
+            base="/"
+          else
+            base="/$repo/"
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+      - name: Build static game
+        env:
+          VITE_BASE_PATH: ${{ steps.path.outputs.base }}
+        run: npm run build
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  # Free personal-account Pages uses a public repository. Never change visibility.
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.event.repository.private == false
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: Publish game
+        id: deployment
+        uses: actions/deploy-pages@v4
